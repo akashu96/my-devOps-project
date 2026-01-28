@@ -5,7 +5,7 @@
 
 ## Prerequisites
 
-- GitHub repository
+- GitHub repository..
 - Azure subscription
 - Azure Container Registry (ACR) created
 - Basic Docker knowledge
