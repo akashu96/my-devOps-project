@@ -148,4 +148,4 @@ Before running workflows:
 
 ---
 
-**Note:** Replace `myacr`, `myapp`, and URLs with your actual values across all files.
+**Note:** Replace `myacr`, `myapp`, and URLs with your actual values across all files..
