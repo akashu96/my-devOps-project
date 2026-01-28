@@ -10,6 +10,7 @@ on:
             - Dockerfile
             - docker-compose.yml
             - github/workflows/build-and-push.yml
+            - README.md
     pull_request:
         branches:
             - main
