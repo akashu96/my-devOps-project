@@ -1,0 +1,84 @@
+name: Build and Push to ACR
+
+on:
+    push: 
+        branches: 
+            - main
+            - develop
+        paths:
+            - src./**
+            - Dockerfile
+            - docker-compose.yml
+            - github/workflows/build-and-push.yml
+    pull_request:
+        branches:
+            - main
+            - develop
+
+env:
+    REGISTRY: ${{ secrets.ACR_LOGIN_SERVER }}
+    IMAGE_NAME: myapp
+
+jobs:
+    build-and-push:
+        runs-on: ubuntu-latest
+    
+        permissions:
+            id-token: write
+            contents: read
+
+        steps:
+            - name: Checkout Code
+              uses: actions/checkout@v3
+              with:
+                fetch-depth: 0
+            
+            - name: Login to ACR
+              uses: azure/docker-login@v1
+              with:
+                login-server: ${{ secrets.ACR_LOGIN_SERVER }}
+                username: ${{ secrets.ACR_USERNAME }}
+                password: ${{ secrets.ACR_PASSWORD }}
+
+            - name: Extract Metadata
+              id: meta
+              uses: docker/metadata-action@v4
+              with: 
+                images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+                tags: |
+                    type=ref,event=branch
+                    type=sha,preix={{branch}}-
+                    type=semver,pattern={{version}}
+                    type=semver,pattern={{major}}.{{minor}}
+                    type=raw,value=latest,enable={{is_default_branch}}
+
+            - name: build and push docker image
+              uses: docker/build-push-action@v5
+              with: 
+                context: .
+                push: ${{ github.event_name != 'pull_request' }}
+                tags: ${{ steps.meta.outputs.tags }}
+                labels: ${{ steps.meta.outputs.labels }}
+                cache-from: type=gha
+                cache-to: type=gha, mode=max
+                build-args: |
+                    BUILD_DATE=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
+                    VCS_REF=${{ github.sha }}
+                    VERSION=${{ github.ref_name }}
+
+            - name: Display pushed images
+              run: |
+                echo "Image successfully push to ACR"
+                echo "registry: ${{ env.REGISTRY }}"
+                echo "image name: ${{ env.IMAGE_NAME }}"
+                echo "tags: ${{ steps.meta.outputs.tags }}"
+              if: github.event_name != 'pull_request'
+
+
+            - name: Verify Image in acr
+              run: |
+                docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+                docker inspect ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+              if: github.event_name != 'pull_request'  
+        
+    

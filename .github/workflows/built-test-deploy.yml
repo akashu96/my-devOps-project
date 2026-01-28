@@ -1,0 +1,194 @@
+name: build-test-deploy
+
+on:
+    push:
+        branches:
+            - main
+            - develop
+    pull_request:
+        branches:
+            - main
+
+env:
+    REGISTRY: ${{ secrets.ACR_LOGIN_SERVER }}
+    IMAGE_NAME: myapp
+    ACR_NAME: myacr
+
+jobs:
+    build:
+        runs-on: ubuntu-latest
+        outputs:
+            image-tag: ${{ steps.meta.outputs.version }}
+
+        steps:
+            - name: Checkout Code
+              uses: actions/checkout@v4
+            
+            - name: set up Docker buildx
+              uses: docker/setup-buildx-action@v3
+            
+            - name: login to ACR
+              uses: azure/docker-login@v1
+              with:
+                login-server: ${{ secrets.ACR_LOGIN_SERVER }}
+                username: ${{ secrets.ACR_USERNAME }}
+                password: ${{ secrets.ACR_PASSWORD }}
+
+            - name: Extract Meradata
+              id: meta
+              uses: docker/metadata-action@v3
+              with:
+                images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+                tags: |
+                  type=sha,prefix={{branch}}-
+                  type=raw,value=latest,enable={{is_defult_branch}}
+                
+            - name: Build and Push Docker Image
+              uses: docker/build-push-action@v5
+              with:
+                context: .
+                push: true
+                tags: ${{ steps.meta.outputs.tags }}
+                labels: ${{ steps.meta.outputs.labels }}
+                cache-from: type=gha
+                cache-to: type=gha,mode=max
+    
+
+    test:
+        needs: build
+        runs-on: ubuntu-latest
+
+        steps:
+            - name: checkout code
+              uses: actions/checkout@v4
+
+            - name: login to ACR
+              uses: azure/docker-login@v1
+              with: 
+                login-server: ${{ env.REGISTRY }}
+                username: ${{ secrets.ACR_USERNAME }}
+                password: ${{ secrets.ACR_PASSWORD }}
+
+            - name: pull Docker image
+              run: |
+                docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+
+            - name: run unit test
+              run: |
+                docker run --rm \
+                    ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest \
+                    npm test
+
+            - name: run integration test
+              run: |
+                docker run --rm \
+                   ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest \
+                   run npm test:integration
+                   
+    
+    deploy-staging: 
+        needs: 
+            - build
+            - test
+        runs-on: ubuntu-latest
+        if: github.ref == 'refs/heads/develop' && github.event_name == 'push'
+        environment:
+            name: staging
+            url: https://staging.myapp.com
+
+        steps: 
+            - name: checkout code
+              uses: actions/checkout@v4
+
+            - name: Login to Azure
+              uses: azure/login@v1
+              with: 
+                creds: ${{ secrets.AZURE_CREDENTIALS }}
+            
+            - name: login to ACR
+              run: |
+                az acr login --name ${{ env.ACR_NAME }}
+
+            - name: Deploy to staging 
+              run: |
+                echo "Deployin to staging environment"
+                # Example: Deploy to AKS
+                # kubectl set image deployment/myapp-staging \
+                #   myapp=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest \
+                #   -n staging
+
+                # Example: Deploy to Container Instances
+                az container create \
+                    --resource-group staging-rg \
+                    --name myapp-staging \
+                    --image ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest \
+                    --cpu 1 --memory 1 \
+                    --registry-login-server ${{ env.REGISTRY }} \
+                    --registry-username ${{ secrets.ACR_USERNAME }} \
+                    --registry-password ${{ secrets.ACR_PASSWORD }} \
+                    --ports 3000 \
+                    --environment-variables NODE_ENV=staging \
+                    --restart-policy OnFailure
+
+            - name: Run smoke tests
+              run: |
+                echo "Running smoke tests on staging..."
+                # curl -f https://staging.myapp.com/health || exit 1
+
+            - name: Notify deployment success
+              if: success()
+              run: |
+                echo "✅ Deployment to staging successful!"
+                echo "Image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest"
+
+
+    # ========== PRODUCTION DEPLOYMENT (Manual Approval) ==========
+    deploy-production:
+        needs: [build, test]
+        runs-on: ubuntu-latest
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        environment:
+            name: production
+            url: https://myapp.com
+        
+        steps:
+        - name: Checkout code
+          uses: actions/checkout@v4
+
+        - name: Pre-deployment validation
+          run: |
+            echo "🔍 Running pre-deployment validation..."
+            echo "Commit: ${{ github.sha }}"
+            echo "Branch: ${{ github.ref_name }}"
+            echo "Triggered by: ${{ github.actor }}"
+
+        - name: Login to Azure
+          uses: azure/login@v1
+          with:
+            creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+        - name: Login to ACR
+          run: |
+            az acr login --name ${{ env.ACR_NAME }}
+
+        - name: Deploy to production
+          run: |
+            echo "🚀 Deploying to production environment..."
+            # Your production deployment commands here
+            # Example: kubectl rollout restart deployment/myapp -n production
+            # OR: az container create for Container Instances
+
+        - name: Post-deployment verification
+          run: |
+            echo "✅ Post-deployment verification..."
+            # Run smoke tests, health checks, etc.
+            sleep 10
+            # curl -f https://myapp.com/health || exit 1
+
+        - name: Create release notes
+          run: |
+            echo "## Release Notes" >> $GITHUB_STEP_SUMMARY
+            echo "- Image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest" >> $GITHUB_STEP_SUMMARY
+            echo "- Commit: ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
+            echo "- Deployed by: ${{ github.actor }}" >> $GITHUB_STEP_SUMMARY
+                    

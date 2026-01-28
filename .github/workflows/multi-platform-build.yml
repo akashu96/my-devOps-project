@@ -1,0 +1,53 @@
+name: Build Multi-Platform Images
+
+on:
+  push:
+    branches:
+        - main
+    tags:
+        - 'v*'
+
+env:
+  REGISTRY: ${{ secrets.ACR_LOGIN_SERVER }}
+  IMAGE_NAME: myapp
+
+jobs:
+    build:
+        runs-on: ubuntu-latest
+
+        steps:
+            - name: Checkout Repository
+              uses: actions/checkout@v4
+
+            - name: set up QEMU
+              uses: docker/setup-qemu-action@v3
+
+            - name: login to ACR
+              uses: azure/docker-login@v1
+              with:
+                login-server: ${{ secrets.ACR_LOGIN_SERVER }}
+                username: ${{ secrets.ACR_USERNAME }}
+                password: ${{ secrets.ACR_PASSWORD }}
+
+            - name: Extract metadata
+              id: meta
+              uses: docker/metadata-action@v5
+              with: 
+                images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+                tags: |
+                    type=ref,event=branch
+                    type=semver,pattern={{version}}
+                    type=semver,pattern={{major}}.{{minor}}
+            
+            - name: Build and push multi platform
+              uses: docker/build-push-action@v5
+              with: 
+                context: .
+                platforms: linux/amd64,linux/arm64
+                push: true
+                tags: ${{ steps.meta.outputs.tags }}
+                labels: ${{ steps.meta.outputs.labels }}
+                cache-from: type=gha
+                cache-to: type=gha,mode=max
+
+

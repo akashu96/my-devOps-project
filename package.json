@@ -1,0 +1,24 @@
+{
+  "name": "my-devops-project",
+  "version": "1.0.0",
+  "description": "creating a project for git actions and ACR",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/akashu96/my-devOps-project.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/akashu96/my-devOps-project/issues"
+  },
+  "homepage": "https://github.com/akashu96/my-devOps-project#readme",
+  "dependencies": {
+    "express": "^5.2.1"
+  }
+}
