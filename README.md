@@ -1,4 +1,4 @@
-**Purpose:** Setup and deployment guide
+**Purpose:** Setup and deployment guide....
 
 ```markdown
 # GitHub Actions + ACR Setup Guide
