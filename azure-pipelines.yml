@@ -304,19 +304,29 @@ stages:
                     inlineScript: |
                       az acr login --name $(ACR_NAME)
 
-                - task: AzureContainerInstance@1
+                - task: AzureCLI@2
                   displayName: 'Create/Update ACI instance'
                   inputs:
-                    azureSubscriptionEndpoint: 'Azure-Staging-SC'
-                    imageSource: 'Conainer Registry'
-                    containerName: 'myapp-staging'
-                    resourceGroupName: 'staging-rg'
-                    imageTag: $(Build.BuildId)
-                    ports: '3000'
-                    cpuCores: '1'
-                    memoryInGb: '1.5'
-                    registryLoginServer: '$(REGISTRY_URL)'
-                    command: 'node src/app.js'
+                    azureSubscription: 'Azure-Staging-SC'
+                    scriptType: bash
+                    scriptLocation: inlineScript
+                    inlineScript: |
+                        az container delete \
+                          --name myapp-staging \
+                          --resource-group staging-rg \
+                          --yes || true
+
+                        az container create \
+                          --resource-group staging-rg \
+                          --name myapp-staging \
+                          --image $(REGISTRY_URL)/myapp:$(Build.BuildId) \
+                          --container-name myapp-staging \
+                          --ports 3000 \
+                          --cpu 1 \
+                          --memory 1.5 \
+                          --command-line "node src/app.js" \
+                          --registry-login-server $(REGISTRY_URL) \
+                          --location eastus  # Direct (your region)
                   continueOnError: false
 
                 - script: |
