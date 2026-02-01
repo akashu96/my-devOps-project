@@ -8,7 +8,7 @@ trigger:
     exclude:
       - refs/tags/*
     
-    paths:
+  paths: 
       include:
         - src/*
         - Dockerfile
@@ -307,7 +307,7 @@ stages:
                     echo "Image: $(REGISTRY_URL)/$(dockerImageName):$(Build.BuildId)"
                   displayName: 'Log deployment info'
 
-            postDeploy:
+            onSuccess:
               steps:
                 - script: |
                     echo "✅ Post-deployment health checks"
@@ -425,7 +425,7 @@ stages:
                     echo "✅ Production deployment command executed"
                   displayName: 'Log deployment'
 
-            postDeploy:
+            onSuccess:
               steps:
                 - task: AzureCLI@2
                   displayName: 'Production Health Checks'
