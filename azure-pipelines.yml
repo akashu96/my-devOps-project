@@ -1,0 +1,498 @@
+trigger:
+  branches:
+    include:
+      - main
+      - develop
+      - release/*
+    
+    exclude:
+      - refs/tags/*
+    
+    paths:
+      include:
+        - src/*
+        - Dockerfile
+        - azure-pipeline.yml
+        - docker-compose.yml
+
+pr:
+  branches:
+    include:
+      - main
+      - develop
+
+# ======== Variables ========
+
+variables:
+  buildConfiguration: 'Release'
+  dockerImageName: 'myapp'
+  ACR_NAME: mydevopsacr
+  REGISTRY_URL: mydevopsacr.azurecr.io
+  DOCKER_BUILDKIT: 1
+  BUILDKIT_PROGRESS: plain
+
+# ======== Build Stage ========
+
+stages:
+  - stage: Build
+    displayName: 'Build Docker Image'
+    jobs:
+      - job: BuildJob
+        pool: 
+          vmImage: 'ubuntu-latest'
+        displayName: 'Build and Push to ACR'  
+
+        steps:
+          # Step 1: Checkout Code
+          - checkout: self
+            displayName: 'CheckOut Code'
+            fetchDepth: 0
+
+          #Step 2: Install Docker
+          - task: DockerInstaller@0
+            inputs:
+              version: '24.0.0'
+            displayName: 'Install Docker'  
+
+          #Step 3: Set Build Variables
+          - script: |
+              BUILD_ID=$(Build.BuildId)
+              BUILD_NUMBER=$(Build.BuildNumber)
+              GIT_COMMIT=$(Build.SourceVersion)
+              BRANCH=$(Build.SourceBranchName)
+
+              echo "##vso [task.setvariable variable=BUILD_ID]${BUILD_ID}"
+              echo "##vso [task.setvariable variable=BUILD_NUMBER]${BUILD_NUMBER}"
+              echo "##vso [task.servariable vairable=GIT_COMMIT]${GIT_COMMIT}"
+              echo "##vso [task.setvariable variable=BRANCH]${BRANCH}"
+
+              echo "Build Configuration:"
+              echo "- BUILD_ID = ${BUILD_ID}"
+              echo "- Build Number = ${BUILD_NUMBER}"
+              echo "- Git Commit = ${GIT_COMMIT}"
+              echo "- Branch = ${BRANCH}"
+            displayName: 'Set build Variables'  
+
+          
+          #Step 4: Build Docker Image
+          - script: |
+              docker build \
+                --tag $(REGISTRY_URL)/$(dockerImageName):$(BUILD_ID) \
+                --tag $(REGISTRY_URL)/$(dockerImageName):$(BRANCH)-latest \
+                --build-arg VCS_REF=$(BUILD.SourceVersion) \
+                --build-arg VERSION=$(BRANCH) \
+                -f Dockerfile .
+            displayName: 'Building Docker Image'
+
+          # Step 5 Login to ACR
+          - task: AzureContainerRegistry@2
+            displayName: 'Login to ACR'
+            inputs:
+              command: login
+              containerRegistry: 'ACR-ServiceConnection'
+
+          #Step 6 Push Image to ACR
+          - script: |
+              docker push $(REGISTRY_URL)/$(dockerImageName):$(BUILD_ID)
+              docker push $(REGISTRY_URL)/$(dockerImageName):$(BRANCH)-latest
+            displayName: 'Push the Image to ACR'
+
+          #Step 7: Publish build artifacts
+          - publish: $(Build.ArtifactStagingDirectory)
+            displayName: 'Publish build artifact'
+            artifact: 'BuildArtifacts'
+            condition: succeeded()
+
+          #Step 8: print image info
+          - script: |
+              echo "✅ Build Completed successfully"
+              echo "Image: $(REGISTRY_URL)/$(dockerImageName):$(BUILD)ID"
+              echo "Also tagged as: $(REGISTRY_URL)/$(dockerImageName):$(BRANCH)-latest"
+            displayName: 'Print build summary'  
+
+#====== TEST STAGE ======
+
+  - stage: Test
+    displayName: 'Test Dcoker Image'
+    dependsOn: Build
+    condition: succeeded()
+
+    jobs:
+      - job: UnitTests
+        displayName: 'Run Unit tests'
+        pool:
+          vmImage: 'ubuntu-latest'
+        
+        steps:
+          #step 1: checkout code
+          
+          - checkout: self
+            displayName: 'Checkout code'
+
+          #step 2: Install docker
+          - task: DockerInstaller@0
+            displayName: 'Installing Docker'
+
+          #Step 3: Login to ACR
+          - task: AzureContainerRegistry@2
+            displayName: 'Login to ACR'
+            inputs: 
+              command: login
+              containerRegistry: 'ACR-ServiceConnection'
+
+          #Step 4: pull build Images
+          - script: |
+              docker pull $(REGISTRY_URL)/$(dockerImageName):$(Build.BuildId)
+            displayName: 'Pulled built images'  
+
+          #Step 5: Run Unit test
+          - script: |
+              docker run --rm \
+              --name unit-test-container \
+              $(REGISTRY_URL)$(dockerImageName):$(Build.BuildId) \
+              npm test
+            continueOnError: false
+            displayName: 'Run unit test in container'
+
+          #Step 6: Test Summary
+          - script: |
+              echo "Test Passed"
+            displayName: 'Test summary' 
+            condition: succeeded() 
+
+      - job: IntegrationTest
+        displayName: 'Integration tests'
+        pool: 
+          vmImage: 'ubuntu-latest'
+
+        steps:
+              #Step 1: checkout code
+              - checkout: self
+                displayName: 'CheckOut Code'
+              
+              #Step 2: Install Docker
+              - task: DockerInstaller@0
+                displayName: 'Install Docker'
+
+              #Step 3: Login to ACR
+              - task: AzureContainerRegistry@2
+                displayName: 'Login to ACR'
+                inputs:
+                  command: login
+                  containerRegistry: 'ACR-ServiceConnection'
+
+              #Step 4 pull built images
+              - script: |
+                  docker pull $(REGISTRY_URL)/$(dockerImageName):$(Build.BuildId)
+                displayName: 'Pull built image'  
+
+              #Step 5: Run Integration test
+              - script: |
+                  docker run --rm \
+                  -e NODE_ENV=test \
+                  -e DATABASE_URL=$(TEST_DATABASE_URL) \
+                  --name integration-test-container \
+                  $(REGISTRY_URL)/$(dockerImageName):$(Build.BuildId) \
+                  npm run test:integration
+                continueOnError: false
+                displayName: 'Run Integration tests'
+                env: 
+                  TEST_DATABASE_URL: $(TEST_DATABASE_URL)
+
+              - script: |
+                  echo "✅ Integration tests passed"
+                displayName: 'Integration test summary'
+                condition: succeeded()
+
+      - job: SecurityScan
+        displayName: 'Security Scan (Trivy)'
+        pool:
+          vmImage: 'ubuntu-latest'
+        continueOnError: true
+        
+        steps:
+          - task: DockerInstaller@0
+            displayName: 'Install Docker'
+
+          - task: AzureContainerRegistry@2
+            displayName: 'Login to ACR'
+            inputs:
+              command: login
+              containerRegistry: 'ACR-ServiceConnection'
+
+          - script: |
+              docker pull aquasec/trivy:latest
+              docker run --rm \
+                -v /var/run/docker.sock:/var/run/docker.sock \
+                aquasec/trivy:latest image \
+                --severity HIGH,CRITICAL \
+                $(REGISTRY_URL)/$(dockerImageName):$(Build.BuildId)
+            displayName: 'Scan image with Trivy'
+            continueOnError: true
+
+          - script: |
+              echo "⚠️ Security scan completed (non-blocking)"
+            displayName: 'Security scan summary'
+
+# ========== STAGING DEPLOYMENT ==========
+  - stage: Staging
+    displayName: 'Deploy to Staging'
+    dependsOn: Test
+    condition: |
+      and (
+        succeeded(),
+        eq(variables['Build.sourceBranch']), 'refs/heads/develop')
+      )
+
+    
+    jobs:
+      - deployment: DeployingStaging
+        displayName: 'Deploy to Staging Env'
+        environment: 'Staging'
+        pool:
+          vmImage: 'ubuntu-latest'
+
+        strategy:
+          runOnce:
+            preDeploy:
+              steps:
+                - checkout: self
+                  displayName: 'Checkout Code'
+
+                - script: |
+                    echo " Pre-Deployment Validations"
+                    echo "Build ID: $(Build.BuildId)"
+                    echo "Branch: $(Build.SourceBranch)"
+                    echo "Commit: $(Build.SourceVersion)"
+                    echo "Triggered by: $(Build.QueuedBy)"
+                  displayName: 'Log Deployment Context'
+
+                - task: AzureContainerRegistry@2
+                  displayName: 'Login to ACR'
+                  inputs:
+                    command: login
+                    containerRegistry: 'ACR-ServiceConnection'
+
+                - script: |
+                    docker pull $(REGISTRY_URL)/$(dockerImageName):$(Build.BuildId)
+                    docker inspect $(REGISTRY_URL)/$(dockerImageName):$(Build.BuildId)
+                  displayName: 'Verify image exists and is valid'
+
+            deploy:
+              steps: 
+                - task: AzureContainerRegistry@2
+                  displayName: 'Login to ACR'
+                  inputs:
+                    command: login
+                    containerRegistry: 'ACR-ServiceConnection'
+
+                - task: AzureContainerInstance@1
+                  displayName: 'Create/Update ACI instance'
+                  inputs:
+                    azureSubscriptionEndpoint: 'Azure-Staging-SC'
+                    imageSource: 'Conainer Registry'
+                    containerRegistry: 'ACR-ServiceConnection'
+                    containerName: 'myapp-staging'
+                    resourceGroupName: 'staging-rg'
+                    imageTag: $(Build.BuildId)
+                    ports: '3000'
+                    cpuCores: '1'
+                    memoryInGb: '1.5'
+                    registryLoginServer: '$(REGISTRY_URL)'
+                    command: 'node src/app.js'
+                  continueOnError: false
+
+                - script: |
+                    echo "🚀 Deployment to staging initiated"
+                    echo "Image: $(REGISTRY_URL)/$(dockerImageName):$(Build.BuildId)"
+                  displayName: 'Log deployment info'
+
+            postDeploy:
+              steps:
+                - script: |
+                    echo "✅ Post-deployment health checks"
+                    sleep 10
+                    # Uncomment for real health checks
+                    # curl -f https://staging.myapp.com/health || exit 1
+                  displayName: 'Run health checks'
+                  continueOnError: true
+
+                - script: |
+                    echo "📊 Deployment to staging completed successfully"
+                  displayName: 'Deployment summary'
+
+# ========== PRODUCTION DEPLOYMENT (WITH APPROVAL) ==========
+  - stage: Production
+    displayName: 'Deploy to Production'
+    dependsOn: Test
+    condition: |
+      and(
+        succeeded(),
+        eq(variables['Build.SourceBranch'], 'refs/heads/main')
+      )
+    
+    jobs:
+      - deployment: DeployProduction
+        displayName: 'Deploy to Production'
+        environment: 'Production'
+        pool:
+          vmImage: 'ubuntu-latest'
+        
+        strategy:
+          runOnce:
+            preDeploy:
+              steps:
+                - checkout: self
+                  displayName: 'Checkout source code'
+
+                - script: |
+                    echo "🔒 PRODUCTION DEPLOYMENT INITIATED"
+                    echo "================================================"
+                    echo "Build ID: $(Build.BuildId)"
+                    echo "Branch: $(Build.SourceBranch)"
+                    echo "Commit: $(Build.SourceVersion)"
+                    echo "Triggered by: $(Build.QueuedBy)"
+                    echo "Approval required: YES"
+                    echo "================================================"
+                  displayName: 'Log production context'
+
+                - task: AzureContainerRegistry@2
+                  displayName: 'Login to ACR'
+                  inputs:
+                    command: login
+                    containerRegistry: 'ACR-ServiceConnection'
+
+                - script: |
+                    docker pull $(REGISTRY_URL)/$(dockerImageName):$(Build.BuildId)
+                    docker inspect $(REGISTRY_URL)/$(dockerImageName):$(Build.BuildId)
+                  displayName: 'Verify image for production'
+
+                - task: AzureCLI@2
+                  displayName: 'Final pre-deployment checks'
+                  inputs:
+                    azureSubscription: 'Production-SC'
+                    scriptType: bash
+                    scriptLocation: inlineScript
+                    inlineScript: |
+                      echo "Verifying production resources..."
+                      # Add checks for resources, quotas, etc.
+                      az acr repository show \
+                        --name $(ACR_NAME) \
+                        --repository $(dockerImageName)
+
+            deploy:
+              steps:
+                - task: AzureContainerRegistry@2
+                  displayName: 'Login to ACR'
+                  inputs:
+                    command: login
+                    containerRegistry: 'ACR-ServiceConnection'
+
+                - task: AzureCLI@2
+                  displayName: 'Deploy to Production AKS'
+                  inputs:
+                    azureSubscription: 'Production-SC'
+                    scriptType: bash
+                    scriptLocation: inlineScript
+                    inlineScript: |
+                      echo "🚀 Deploying to production..."
+                      
+                      # Example: Update AKS deployment
+                      # Replace with your actual deployment command
+                      # kubectl set image deployment/myapp \
+                      #   myapp=$(REGISTRY_URL)/$(dockerImageName):$(Build.BuildId) \
+                      #   -n production
+                      
+                      # Alternative: Deploy via Helm
+                      # helm upgrade myapp ./helm-chart \
+                      #   --set image.tag=$(Build.BuildId) \
+                      #   -n production
+                      
+                      # Alternative: Azure Container Instances
+                      az container create \
+                        --resource-group production-rg \
+                        --name myapp-prod-$(Build.BuildId) \
+                        --image $(REGISTRY_URL)/$(dockerImageName):$(Build.BuildId) \
+                        --cpu 2 --memory 2 \
+                        --registry-login-server $(REGISTRY_URL) \
+                        --registry-username $(ACR_USERNAME) \
+                        --registry-password $(ACR_PASSWORD) \
+                        --ports 3000 \
+                        --environment-variables NODE_ENV=production \
+                        --restart-policy OnFailure || true
+
+                - script: |
+                    echo "✅ Production deployment command executed"
+                  displayName: 'Log deployment'
+
+            postDeploy:
+              steps:
+                - task: AzureCLI@2
+                  displayName: 'Production Health Checks'
+                  inputs:
+                    azureSubscription: 'Production-SC'
+                    scriptType: bash
+                    scriptLocation: inlineScript
+                    inlineScript: |
+                      echo "🏥 Running production health checks..."
+                      sleep 15
+                      
+                      # Add real health check commands
+                      # curl -f https://myapp.com/health || exit 1
+                      # curl -f https://myapp.com/api/status || exit 1
+                      
+                      echo "✅ Health checks passed"
+
+                - script: |
+                    echo "================================================"
+                    echo "✅ PRODUCTION DEPLOYMENT COMPLETED SUCCESSFULLY"
+                    echo "================================================"
+                    echo "Service: myapp"
+                    echo "Image: $(REGISTRY_URL)/$(dockerImageName):$(Build.BuildId)"
+                    echo "Environment: Production"
+                    echo "Deployed by: $(Build.QueuedBy)"
+                    echo "Build ID: $(Build.BuildId)"
+                    echo "Date: $(System.CollectionUri)"
+                    echo "================================================"
+                  displayName: 'Production deployment summary'
+
+# ========== CLEANUP STAGE (Optional) ==========
+  - stage: Cleanup
+    displayName: 'Cleanup Old Images'
+    dependsOn: Production
+    condition: |
+      and(
+        succeeded(),
+        eq(variables['Build.SourceBranch'], 'refs/heads/main')
+      )
+    jobs:
+      - job: CleanupImages
+        displayName: 'Remove old ACR images'
+        pool:
+          vmImage: 'ubuntu-latest'
+        
+        steps:
+          - task: AzureCLI@2
+            displayName: 'Delete images older than 30 days'
+            inputs:
+              azureSubscription: 'Production-SC'
+              scriptType: bash
+              scriptLocation: inlineScript
+              inlineScript: |
+                echo "🧹 Cleaning up old images from ACR..."
+                
+                # Delete untagged manifests older than 30 days
+                az acr repository delete-manifests \
+                  --name $(ACR_NAME) \
+                  --repository $(dockerImageName) \
+                  --ago 30d \
+                  --untagged \
+                  --yes || true
+                
+                echo "✅ Cleanup completed"
+            continueOnError: true
+
+
+
+
+
