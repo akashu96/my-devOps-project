@@ -12,7 +12,7 @@ trigger:
       include:
         - src/*
         - Dockerfile
-        - azure-pipeline.yml
+        - azure-pipelines.yml
         - docker-compose.yml
 
 pr:
@@ -61,10 +61,10 @@ stages:
               GIT_COMMIT=$(Build.SourceVersion)
               BRANCH=$(Build.SourceBranchName)
 
-              echo "##vso [task.setvariable variable=BUILD_ID]${BUILD_ID}"
-              echo "##vso [task.setvariable variable=BUILD_NUMBER]${BUILD_NUMBER}"
-              echo "##vso [task.servariable vairable=GIT_COMMIT]${GIT_COMMIT}"
-              echo "##vso [task.setvariable variable=BRANCH]${BRANCH}"
+              echo "##vso[task.setvariable variable=BUILD_ID]${BUILD_ID}"
+              echo "##vso[task.setvariable variable=BUILD_NUMBER]${BUILD_NUMBER}"
+              echo "##vso[task.setvariable variable=GIT_COMMIT]${GIT_COMMIT}"
+              echo "##vso[task.setvariable variable=BRANCH]${BRANCH}"
 
               echo "Build Configuration:"
               echo "- BUILD_ID = ${BUILD_ID}"
@@ -106,7 +106,7 @@ stages:
           #Step 8: print image info
           - script: |
               echo "✅ Build Completed successfully"
-              echo "Image: $(REGISTRY_URL)/$(dockerImageName):$(BUILD)ID"
+              echo "Image: $(REGISTRY_URL)/$(dockerImageName):$(Build.BuildId)"
               echo "Also tagged as: $(REGISTRY_URL)/$(dockerImageName):$(BRANCH)-latest"
             displayName: 'Print build summary'  
 
@@ -149,7 +149,7 @@ stages:
           - script: |
               docker run --rm \
               --name unit-test-container \
-              $(REGISTRY_URL)$(dockerImageName):$(Build.BuildId) \
+              $(REGISTRY_URL)/$(dockerImageName):$(Build.BuildId) \
               npm test
             continueOnError: false
             displayName: 'Run unit test in container'
@@ -239,9 +239,9 @@ stages:
     displayName: 'Deploy to Staging'
     dependsOn: Test
     condition: |
-      and (
+      and(
         succeeded(),
-        eq(variables['Build.sourceBranch']), 'refs/heads/develop')
+        eq(variables['Build.SourceBranch'], 'refs/heads/develop')
       )
 
     
@@ -307,19 +307,20 @@ stages:
                     echo "Image: $(REGISTRY_URL)/$(dockerImageName):$(Build.BuildId)"
                   displayName: 'Log deployment info'
 
-            onSuccess:
-              steps:
-                - script: |
-                    echo "✅ Post-deployment health checks"
-                    sleep 10
-                    # Uncomment for real health checks
-                    # curl -f https://staging.myapp.com/health || exit 1
-                  displayName: 'Run health checks'
-                  continueOnError: true
+            on:
+              success:
+                steps:
+                  - script: |
+                      echo "✅ Post-deployment health checks"
+                      sleep 10
+                      # Uncomment for real health checks
+                      # curl -f https://staging.myapp.com/health || exit 1
+                    displayName: 'Run health checks'
+                    continueOnError: true
 
-                - script: |
-                    echo "📊 Deployment to staging completed successfully"
-                  displayName: 'Deployment summary'
+                  - script: |
+                      echo "📊 Deployment to staging completed successfully"
+                    displayName: 'Deployment summary'
 
 # ========== PRODUCTION DEPLOYMENT (WITH APPROVAL) ==========
   - stage: Production
@@ -425,36 +426,37 @@ stages:
                     echo "✅ Production deployment command executed"
                   displayName: 'Log deployment'
 
-            onSuccess:
-              steps:
-                - task: AzureCLI@2
-                  displayName: 'Production Health Checks'
-                  inputs:
-                    azureSubscription: 'Production-SC'
-                    scriptType: bash
-                    scriptLocation: inlineScript
-                    inlineScript: |
-                      echo "🏥 Running production health checks..."
-                      sleep 15
-                      
-                      # Add real health check commands
-                      # curl -f https://myapp.com/health || exit 1
-                      # curl -f https://myapp.com/api/status || exit 1
-                      
-                      echo "✅ Health checks passed"
+            on:
+              success:
+                steps:
+                  - task: AzureCLI@2
+                    displayName: 'Production Health Checks'
+                    inputs:
+                      azureSubscription: 'Production-SC'
+                      scriptType: bash
+                      scriptLocation: inlineScript
+                      inlineScript: |
+                        echo "🏥 Running production health checks..."
+                        sleep 15
+                        
+                        # Add real health check commands
+                        # curl -f https://myapp.com/health || exit 1
+                        # curl -f https://myapp.com/api/status || exit 1
+                        
+                        echo "✅ Health checks passed"
 
-                - script: |
-                    echo "================================================"
-                    echo "✅ PRODUCTION DEPLOYMENT COMPLETED SUCCESSFULLY"
-                    echo "================================================"
-                    echo "Service: myapp"
-                    echo "Image: $(REGISTRY_URL)/$(dockerImageName):$(Build.BuildId)"
-                    echo "Environment: Production"
-                    echo "Deployed by: $(Build.QueuedBy)"
-                    echo "Build ID: $(Build.BuildId)"
-                    echo "Date: $(System.CollectionUri)"
-                    echo "================================================"
-                  displayName: 'Production deployment summary'
+                  - script: |
+                      echo "================================================"
+                      echo "✅ PRODUCTION DEPLOYMENT COMPLETED SUCCESSFULLY"
+                      echo "================================================"
+                      echo "Service: myapp"
+                      echo "Image: $(REGISTRY_URL)/$(dockerImageName):$(Build.BuildId)"
+                      echo "Environment: Production"
+                      echo "Deployed by: $(Build.QueuedBy)"
+                      echo "Build ID: $(Build.BuildId)"
+                      echo "Date: $(System.CollectionUri)"
+                      echo "================================================"
+                    displayName: 'Production deployment summary'
 
 # ========== CLEANUP STAGE (Optional) ==========
   - stage: Cleanup
