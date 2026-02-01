@@ -85,11 +85,14 @@ stages:
             displayName: 'Building Docker Image'
 
           # Step 5 Login to ACR
-          - task: AzureContainerRegistry@2
+          - task: AzureCLI@2
             displayName: 'Login to ACR'
             inputs:
-              command: login
-              containerRegistry: 'ACR-ServiceConnection'
+              azureSubscription: 'Azure-Staging-SC'
+              scriptType: bash
+              scriptLocation: inlineScript
+              inlineScript: |
+                az acr login --name $(ACR_NAME)
 
           #Step 6 Push Image to ACR
           - script: |
@@ -134,11 +137,14 @@ stages:
             displayName: 'Installing Docker'
 
           #Step 3: Login to ACR
-          - task: AzureContainerRegistry@2
+          - task: AzureCLI@2
             displayName: 'Login to ACR'
-            inputs: 
-              command: login
-              containerRegistry: 'ACR-ServiceConnection'
+            inputs:
+              azureSubscription: 'Azure-Staging-SC'
+              scriptType: bash
+              scriptLocation: inlineScript
+              inlineScript: |
+                az acr login --name $(ACR_NAME)
 
           #Step 4: pull build Images
           - script: |
@@ -175,11 +181,14 @@ stages:
                 displayName: 'Install Docker'
 
               #Step 3: Login to ACR
-              - task: AzureContainerRegistry@2
+              - task: AzureCLI@2
                 displayName: 'Login to ACR'
                 inputs:
-                  command: login
-                  containerRegistry: 'ACR-ServiceConnection'
+                  azureSubscription: 'Azure-Staging-SC'
+                  scriptType: bash
+                  scriptLocation: inlineScript
+                  inlineScript: |
+                    az acr login --name $(ACR_NAME)
 
               #Step 4 pull built images
               - script: |
@@ -214,11 +223,14 @@ stages:
           - task: DockerInstaller@0
             displayName: 'Install Docker'
 
-          - task: AzureContainerRegistry@2
+          - task: AzureCLI@2
             displayName: 'Login to ACR'
             inputs:
-              command: login
-              containerRegistry: 'ACR-ServiceConnection'
+              azureSubscription: 'Azure-Staging-SC'
+              scriptType: bash
+              scriptLocation: inlineScript
+              inlineScript: |
+                az acr login --name $(ACR_NAME)
 
           - script: |
               docker pull aquasec/trivy:latest
@@ -267,11 +279,14 @@ stages:
                     echo "Triggered by: $(Build.QueuedBy)"
                   displayName: 'Log Deployment Context'
 
-                - task: AzureContainerRegistry@2
+                - task: AzureCLI@2
                   displayName: 'Login to ACR'
                   inputs:
-                    command: login
-                    containerRegistry: 'ACR-ServiceConnection'
+                    azureSubscription: 'Azure-Staging-SC'
+                    scriptType: bash
+                    scriptLocation: inlineScript
+                    inlineScript: |
+                      az acr login --name $(ACR_NAME)
 
                 - script: |
                     docker pull $(REGISTRY_URL)/$(dockerImageName):$(Build.BuildId)
@@ -280,18 +295,20 @@ stages:
 
             deploy:
               steps: 
-                - task: AzureContainerRegistry@2
+                - task: AzureCLI@2
                   displayName: 'Login to ACR'
                   inputs:
-                    command: login
-                    containerRegistry: 'ACR-ServiceConnection'
+                    azureSubscription: 'Azure-Staging-SC'
+                    scriptType: bash
+                    scriptLocation: inlineScript
+                    inlineScript: |
+                      az acr login --name $(ACR_NAME)
 
                 - task: AzureContainerInstance@1
                   displayName: 'Create/Update ACI instance'
                   inputs:
                     azureSubscriptionEndpoint: 'Azure-Staging-SC'
                     imageSource: 'Conainer Registry'
-                    containerRegistry: 'ACR-ServiceConnection'
                     containerName: 'myapp-staging'
                     resourceGroupName: 'staging-rg'
                     imageTag: $(Build.BuildId)
@@ -357,11 +374,14 @@ stages:
                     echo "================================================"
                   displayName: 'Log production context'
 
-                - task: AzureContainerRegistry@2
+                - task: AzureCLI@2
                   displayName: 'Login to ACR'
                   inputs:
-                    command: login
-                    containerRegistry: 'ACR-ServiceConnection'
+                    azureSubscription: 'Production-SC'
+                    scriptType: bash
+                    scriptLocation: inlineScript
+                    inlineScript: |
+                      az acr login --name $(ACR_NAME)
 
                 - script: |
                     docker pull $(REGISTRY_URL)/$(dockerImageName):$(Build.BuildId)
@@ -383,11 +403,14 @@ stages:
 
             deploy:
               steps:
-                - task: AzureContainerRegistry@2
+                - task: AzureCLI@2
                   displayName: 'Login to ACR'
                   inputs:
-                    command: login
-                    containerRegistry: 'ACR-ServiceConnection'
+                    azureSubscription: 'Production-SC'
+                    scriptType: bash
+                    scriptLocation: inlineScript
+                    inlineScript: |
+                      az acr login --name $(ACR_NAME)
 
                 - task: AzureCLI@2
                   displayName: 'Deploy to Production AKS'
