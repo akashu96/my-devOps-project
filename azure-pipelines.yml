@@ -21,7 +21,7 @@ pr:
       - main
       - develop
 
-# ======== Variables ========
+# ======== Variables =========
 
 variables:
   buildConfiguration: 'Release'
